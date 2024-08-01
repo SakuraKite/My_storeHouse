@@ -1,0 +1,834 @@
+
+# include "encounter.h"
+
+int X_Location_message[100] = { 10000};//终点位置
+int Y_Location_message[100] = { 10000};//终点位置
+
+unsigned char Color_now_task[20] = {100};//当前物块颜色
+
+		# if Test_2
+			unsigned char Color_Task_1[20] = { 100};
+			int X_mubiao_WZ[100] = { 10000};//任务一坐标点（不算C点的坐标）
+			int Y_mubiao_WZ[100] = { 10000};
+		# else
+			unsigned char Color_Task_1[20] = {3, 2, 1, 100}; //测试任务一时数组为3 2 1 1 100
+			int X_mubiao_WZ[100] = {1, -1, 10000};//任务一坐标点（不算C点的坐标）
+			int Y_mubiao_WZ[100] = {6,  2, 10000};
+		# endif
+
+unsigned char Color_Task_2[20] = {4, 2, 1, 5, 3, 100}; //2 ** 3 ** 1  --- 抽签顺序默认为 2 4 3 5 1 任务二第一次结束后可将数组从第二位逆序排列一次即为第二次顺序。（最后在数组末尾加个100即可）
+
+
+
+int do_carry[100]   = {10, 10000};//中间动作
+int do_advance[100] = {0, 10000};//预先动作
+int X_process[100]  = {2, 10000};//过程位置
+//int Y_process[100] = {10000};//过程位置
+
+char Copy_now_action[7] = {0};//负责拷贝出一个动作
+
+int X_need_pos = 0;
+int Y_need_pos = 0;
+int X_now_pos  = 1;
+int Y_now_pos  = 6;//初始化车头朝向4
+
+char X_init_flag = 0;
+char Y_init_flag = 0;
+char X_finish_flag = 1;
+char Y_finish_flag = 1;
+
+//MPU6050角度
+float Pitch = 0,Roll = 0,Yaw = 0;						//角度
+
+float zhuangwang_angle = 0;
+float now_angle = 0;
+float store_angle = 0;//储存转弯时刻的角度
+char Zhuang_Xiang_flag = 0;
+char r_finish_flag = 1;//转弯是否完成
+char ZT_finish = 0;
+char task_ZT = 0;//任务状态 0为没有任务 1为忙碌状态
+char H_flag = 0;
+
+char jisuan_flag = 1;
+//float need_angle = 0;
+//int Encoder_Timer_Overflow_L;                                      //编码器溢出次数（每729*4溢出一次）
+//int Encoder_Timer_Overflow_R;                                      //编码器溢出次数（每729*4溢出一次）
+//u16 Previous_Count_L = 0;                                              //上次TIMx->CNT的值
+//u16 Previous_Count_R = 0;                                              //上次TIMx->CNT的值
+
+
+
+//int Lun_Left_Count = 0;
+int Zhuang_Cout = 0;
+
+
+int Jel = 0;
+int Kel = 0;
+
+short Read_Speed(int TIMx)
+{
+	short Count = 0;                                                      //一段时间内转过的脉冲数	
+
+	
+	switch(TIMx)
+	{
+		case 3:	
+				Count = (short)TIM3->CNT; /*CNT为uint32, 转为int16*/
+//				if ((ZT_Flag == zhuangwang) && (do_advance[0] == 180))
+//				{
+//					Lun_Left_Count += Count; Jel = Lun_Left_Count;
+//				}
+//				else	Lun_Left_Count = 0;//为下次计算做准备
+//		Lun_Left_Count += Count;
+						TIM3->CNT = 0;
+							break;
+		case 4:
+				Count = -(short)TIM4->CNT; /*CNT为uint32, 转为int16*/
+				if (ZT_Flag == zhuangwang)
+				{ Zhuang_Cout += Count; Kel = Zhuang_Cout;
+//				if ((Zhuang_Cout > 2000) || (Zhuang_Cout < -1570))	Zhuang_Cout = 0;
+				}
+				else Zhuang_Cout = 0;//为下次转弯计数做准备
+				TIM4->CNT = 0;	
+							
+					break;
+					
+		default:
+				Count = 0;
+							break;
+	}
+	
+	//限幅Count
+	// Limit_Count(&Count);	
+	
+		return Count;
+}
+
+void Limit_Count(short *Count)
+{
+	if (*Count > (ENCODER_PPR_L-1)*4)	*Count = (ENCODER_PPR_L-1)*4;
+	if (*Count < -(ENCODER_PPR_L-1)*4)	*Count = -(ENCODER_PPR_L-1)*4;
+}
+
+//入口参数q范围不等于4和-4
+int Count1_7Xunhuan(int q)
+{
+	int y = 0;
+	
+	if (q < 0)	y = q + 8;
+	else 		y = q;
+	
+	return y;
+	
+}
+
+
+
+
+# if Test_2
+unsigned char Task_ZT_flag = 0;
+unsigned char Hand_flag = 1;
+# else 
+unsigned char Hand_flag = 10;//夹手状态 1为夹 10为开
+unsigned char Task_ZT_flag = 100;// 1代表任务一结束， 5代表已经开始到物料代取点程序 10代表进行着任务二 100为没开始任务 0代表开始进行任务一
+# endif
+
+
+void Find_WZ(unsigned char color)
+{
+	int i = 0;
+	
+	if (Color_now_task[0] == 100)	{goto out;}
+	
+	switch (color)
+	{
+		case 1:	//绿色
+				if (task_ZT == freedom)
+				{	
+					task_ZT = busy;
+					if (Task_ZT_flag == 10)
+					{//进行任务二
+						X_Location_message[0] = 1;
+						Y_Location_message[0] = 6;
+						X_Location_message[1] = 2;
+						Y_Location_message[1] = 6;
+						X_Location_message[2] = 10000;
+						Y_Location_message[2] = 10000;
+					}
+					else{
+						X_Location_message[0] = 2;
+						Y_Location_message[0] = 6;
+						X_Location_message[1] = 10000;
+						Y_Location_message[1] = 10000;
+					}
+					for (i=0; i<20; i++)		Color_now_task[i] = Color_now_task[i+1];
+				}	
+				goto out;
+					//break;
+	
+		case 2://白色
+				if (task_ZT == freedom)
+				{
+					task_ZT = busy;
+					if (Task_ZT_flag == 10)
+					{
+						X_Location_message[0] = 1;
+						Y_Location_message[0] = 5;
+						X_Location_message[1] = 2;
+						Y_Location_message[1] = 5;
+						X_Location_message[2] = 10000;
+						Y_Location_message[2] = 10000;
+					}
+					else{
+						X_Location_message[0] = 2;
+						Y_Location_message[0] = 5;
+						X_Location_message[1] = 10000;
+						Y_Location_message[1] = 10000;
+					}
+					for (i=0; i<20; i++)		Color_now_task[i] = Color_now_task[i+1];
+				}
+				goto out;
+				//	break;
+		
+		case 3://红色
+				if (task_ZT == freedom)
+				{
+					task_ZT = busy;
+					if (Task_ZT_flag == 10)
+					{
+						X_Location_message[0] = 1;
+						Y_Location_message[0] = 4;
+						X_Location_message[1] = 2;
+						Y_Location_message[1] = 4;
+						X_Location_message[2] = 10000;
+						Y_Location_message[2] = 10000;
+					}
+					else{
+						X_Location_message[0] = 2;
+						Y_Location_message[0] = 4;
+						X_Location_message[1] = 10000;
+						Y_Location_message[1] = 10000;
+					}
+					for (i=0; i<20; i++)		Color_now_task[i] = Color_now_task[i+1];
+				}	
+				goto out;
+					//break;
+		
+		case 4://黑色
+				if (task_ZT == freedom)
+				{
+					task_ZT = busy;
+					if (Task_ZT_flag == 10)
+					{
+						X_Location_message[0] = -1;
+						Y_Location_message[0] = 3;
+						X_Location_message[1] = -2;
+						Y_Location_message[1] = 3;
+						X_Location_message[2] = 10000;
+						Y_Location_message[2] = 10000;
+					}
+					else{
+						X_Location_message[0] = -2;
+						Y_Location_message[0] = 3;
+						X_Location_message[1] = 10000;
+						Y_Location_message[1] = 10000;
+					}
+					for (i=0; i<20; i++)		Color_now_task[i] = Color_now_task[i+1];
+				}
+				goto out;
+					//break;
+		
+		case 5://蓝色
+				if (task_ZT == freedom)
+				{
+					task_ZT = busy;
+					if (Task_ZT_flag == 10)
+					{
+						X_Location_message[0] = -1;
+						Y_Location_message[0] = 2;
+						X_Location_message[1] = -2;
+						Y_Location_message[1] = 2;
+						X_Location_message[2] = 10000;
+						Y_Location_message[2] = 10000;
+					}
+					else{
+						X_Location_message[0] = -2;
+						Y_Location_message[0] = 2;
+						X_Location_message[1] = 10000;
+						Y_Location_message[1] = 10000;
+					}
+					for (i=0; i<20; i++)		Color_now_task[i] = Color_now_task[i+1];
+				}
+out:    	  				
+				if (Task_ZT_flag == 10 || Task_ZT_flag == 5 ){//进行任务二时触手状态标志位改变推迟到 到达物块地点改变
+					//任务二每次放物块时要经历两次放，第一次正常放，但不改变Hand_flag，第二次也就是到达物料地点再改变Hand_flag
+					if (Hand_flag == 10) 
+					{
+						if (Task_ZT_flag == 5) {do_carry[0] = 40;time_fuzhi(60);}//第一次到达物块代取点
+						 Hand_flag = 1;
+					}
+					else				 { do_carry[0] = 26; time_fuzhi(21); if (X_now_pos == 2 || X_now_pos == -2) Hand_flag = 10;}
+				}
+				else{//任务一
+					if (Hand_flag == 10) {time_fuzhi(20);do_carry[0] = 20; Hand_flag = 1;}
+					else	{time_fuzhi(21);do_carry[0] = 21; Hand_flag = 10;}		
+				}
+				
+					break;
+		
+		case 6:
+		default:do_carry[0] = 0;
+					break;		
+	}
+	
+}
+
+
+unsigned char kk = 0;
+
+void Task_1(void)
+{
+	unsigned char color = color_Update();
+	kk = color;
+	
+	if (Task_ZT_flag == 100)	{Task_ZT_flag = 0; memcpy(Color_now_task, Color_Task_1, sizeof(Color_Task_1));}
+
+	#if Test_1
+	#else
+		if (Color_now_task[0] == 100)
+		{
+		 Task_ZT_flag = 1;
+		//任务一结束，传入任务2需要到达的物块地点（这个顺序是固定的先7后1）将坐标写入X_mubiao_WZ和Y_mubiao_WZ中即可
+			X_mubiao_WZ[0] = 2;
+			Y_mubiao_WZ[0] = 7;
+			X_mubiao_WZ[1] = -2;
+			Y_mubiao_WZ[1] = 1;
+			X_mubiao_WZ[2] = 10000;
+			Y_mubiao_WZ[2] = 10000;
+		}
+ 
+		Find_WZ(Color_now_task[0]);
+	#endif
+	
+}
+
+void Task_2(void)
+{
+	unsigned char colors = color_Update();
+	
+	if ((X_now_pos > 0 && Y_now_pos == 7) || (X_now_pos < 0 &&Y_now_pos == 1))//到5个物块地点，就进行任务二
+	{ memcpy(Color_now_task, Color_Task_2, sizeof(Color_Task_2));}
+	
+	Find_WZ(Color_now_task[0]);
+}
+
+void copy_tab(char *target, const char *source, int n)
+{//本函数功能为抽取即将执行的动作。参数一：目标数组 参二：原数组 参三：抽取动作序号
+	int i = 0;
+	
+	for (i=(n-1)*7; i<n*7; i++)		*target++ = source[i];
+}
+
+
+/*
+**do_advance[]中装载值为 -135 -90 -45 0 45 90 135 180  
+**
+*/
+void Jisuan_Target_Pos(void)
+{
+	static int count = 0;//负责记录Wu_Release动作执行次数
+	static int counter = 0;//负责记录Mapan_zhuang动作执行次数
+	
+	if((do_carry[0]!=10000) && (do_advance[0]!=10000) && (X_process[0]!=10000))//初始化完成
+	{
+		if (do_advance[0] != 0)
+		{
+			ZT_Flag = zhuangwang;
+
+			if (do_advance[0] == 180)//转180°
+			{
+				if (Y_now_pos >= 4)	Y_need_pos = Y_now_pos-4;
+				else Y_need_pos = Y_now_pos + 4; 
+				r_finish_flag = 0;//代表是否执行转弯
+			}
+			else
+			{
+				if (r_finish_flag == 1) 
+				{
+					Y_need_pos = Y_Location_message[0];
+					r_finish_flag = 0;
+					for (int i=0; i<=99; i++)
+					{
+						X_Location_message[i] = X_Location_message[i+1];
+						Y_Location_message[i] = Y_Location_message[i+1];
+					}
+				}
+			}	
+		}
+		else if((X_now_pos != X_process[0]))
+		{	
+			if (stop_time == 0)
+			{
+				ZT_Flag = qianjin;
+				if (Road_timee == 0)	Encounter_Road();
+				time_fuzhi(1);
+			}
+		}
+		else if (do_carry[0] != 0)
+		{//任务二逻辑代码：当第一次到达取物块地点时，动作执行为 降--5个舵机抓--升--舵盘转（为下个物块做准备）--触手抓 。
+		//	当到达卸货地点时动作执行为：降--一个舵机放--升--舵盘转（为下个物块做准备）--触手抓。
+		
+			P_flag = 1;
+			switch (do_carry[0])//缺一个动作完成标志
+			{
+				case  5://原点停车
+							ZT_Flag = stop;
+							
+							if (stop_time_r == 0)
+							{do_carry[0] = 0;time_fuzhi(0);	time_fuzhi(3);}
+							break;
+				
+				case 10://停获取物块颜色	
+							ZT_Flag = stop;
+							if (stop_time_r == 0)	
+							{ 		
+								if (Task_ZT_flag == 5 || Task_ZT_flag == 10)	Task_2();//Task_ZT_flag == 1代表任务一已经完成
+								else									Task_1(); 
+								
+										#if Test_1//测试用的   
+											do_carry[0] = 0;
+										#endif	
+							}
+							break;
+							
+				case 20://任务一抓	
+							ZT_Flag = grap;
+							Hand_flag = 1;
+							if (Grap_time == 0)   
+							{	//任务一结束
+								do_carry[0] = 0;time_fuzhi(2);time_fuzhi(51);
+							}
+							break;
+							
+				case 21://任务一放	
+							ZT_Flag = grap_N;
+							if (Grap_N_time == 0) 
+							{
+								do_carry[0] = 30; 
+								time_fuzhi(30);	
+							}
+							break;
+							
+				case 25://任务二抓
+							ZT_Flag = grap;
+							if (Grap_time == 0)
+							{//进行下个坐标
+								do_carry[0] = 0;
+							}
+							break;
+				
+				case 26://任务二放
+							ZT_Flag = grap_N;
+							if 	((X_now_pos == 2 || X_now_pos == -2) && Task_ZT_flag != 1)     goto link;//作用跳过第二次放的时间
+							if (Grap_N_time == 0)
+							{	if (Hand_flag == 10)
+								{
+link:					       		if(Task_ZT_flag != 5)
+									{//不是物料代取点
+										do_carry[0] = 31; 
+										time_fuzhi(30);	
+										Hand_flag = 1;
+									}
+									else
+									{//是物料代取点
+										do_carry[0] = 0;
+									}
+								}
+								else//进行下个坐标
+								do_carry[0] = 0;
+							}
+							break;					
+							
+				case 30://任务一后退
+							ZT_Flag = houtui;
+							if (Hou_time == 0)  
+							{
+								task_ZT = freedom;
+								if (Task_ZT_flag == 1)		Task_ZT_flag = 5;
+								do_carry[0] = 0; 
+								time_fuzhi(4);
+								H_flag = 1;
+							}
+							break;
+							
+				case 31://后退		任务二第一次运物块
+							ZT_Flag = houtui;
+							if (Hou_time == 0)
+							{
+								Load(0, 0);
+								task_ZT = freedom;
+								
+								//任务二第一部分
+								//后退完成直接转码盘卸物块
+									do_carry[0] = 54;
+									time_fuzhi(70);
+								
+								H_flag = 1;
+							}
+							break;
+							
+				case 40://步进下降
+							ZT_Flag = bj_fall;
+							if (BJ_fall_time == 0)
+							{//到case 50
+								 do_carry[0] = 50;time_fuzhi(66);
+								//else if (Task_ZT_flag == 10){do_carry[0] = 51; time_fuzhi(67);}//依次放下物块
+							}
+							break;
+							
+				case 41://步进上升
+							ZT_Flag = bj_up;
+							if (BJ_up_time == 0)
+							{
+								if (Task_ZT_flag == 5) 
+								{//抓完结束动作
+									Task_ZT_flag = 10;
+									do_carry[0] = 25;
+									time_fuzhi(20);
+								}
+								else
+								{
+									do_carry[0] = 54;
+									time_fuzhi(70);
+								}
+							}
+							break;
+			
+				case 50://4个舵机抓
+							ZT_Flag = bj_grap;
+							if (Wukuai_grap_time == 0)
+							{//上升
+								do_carry[0] = 41;
+								time_fuzhi(61);
+							}
+							break;
+				
+				case 51://5个舵机依次放下物块
+							ZT_Flag = bj_release;
+							copy_tab(Copy_now_action, Wu_Release, count);
+							if (Wukuai_release_time == 0)
+							{//跳转到case 41
+								do_carry[0] = 41;
+								time_fuzhi(61);
+								count++;//为下次动作做准备
+								if (count>=4)	count = 0;
+							}
+							break;
+							
+				case 52://舵盘转
+							ZT_Flag = mapan_zhuang;
+							copy_tab(Copy_now_action, Mapan_zhuang, counter);
+							if (Mapan_zhuang_time == 0)
+							{//颜色识别 + 触手抓取物块
+								do_carry[0] = 10;
+								counter++;//执行最高次数（即一次任务执行完毕），则进行重置
+								if (counter>=4)	counter = 0;
+							}
+							break;
+							
+											
+				case 54://任务二第一部分  舵盘转
+							ZT_Flag = mapan_zhuang;
+							
+							time_fuzhi(67);
+							if (Mapan_zhuang_time == 0)
+							{//放物块
+								do_carry[0] = 55;
+							}
+							if (counter < 3)	
+							{//码盘不转直接放
+								Copy_now_action[0] = 100;
+								goto Glik;//节约时间
+							}
+							else	{copy_tab(Copy_now_action, Mapan_zhuang, counter); counter = 0;}
+							break;
+							
+		    	case 55://任务二第一部分  依次放下物块
+Glik:						ZT_Flag = bj_release;
+							copy_tab(Copy_now_action, Wu_Release, count);
+							if (Wukuai_release_time == 0)
+							{//触手抓取物块
+								do_carry[0] = 25;
+								time_fuzhi(20);
+								counter++;//记录放下物块数来间接反馈目前码盘待转的数
+								count++;//为下次动作做准备
+								if (count>=4)	count = 0;
+							}
+							break;
+									
+				default:	break;
+			}
+		}
+		else
+		{
+				ZT_Flag = stop;
+				for (int i=0; i<=99; i++)
+				{
+					do_carry[i]   = do_carry[i+1];
+					do_advance[i] = do_advance[i+1];
+					X_process[i]  = X_process[i+1];
+				}
+			
+		}
+				
+	}
+		
+	else
+	{
+		if(X_Location_message[0]!=10000 && Y_Location_message[0]!=10000)
+		{
+			if (Y_Location_message[0]-Y_now_pos==0)//Y_now_pos  为当前车头朝向
+			{
+					if ((X_now_pos >= 0 && X_process[0] > 0) || (X_now_pos < 0 && X_process[0] < 0))
+					{
+						X_process[0] = X_Location_message[0];
+						do_advance[0]= 0;//转0°
+						do_carry[0] = 10;
+						
+						X_process[1] = 10000;
+						do_advance[1] = 10000;
+						do_carry[1] = 10000;
+					}
+					else
+					{
+						X_process[0] = 0;
+						do_advance[0]= 0;//转0°
+						do_carry[0] = 5;
+							
+						X_process[1] = X_Location_message[0];
+						do_advance[1]= 0;//转0°
+						do_carry[1] = 10;
+						
+						X_process[2] = 10000;
+						do_advance[2] = 10000;
+						do_carry[2] = 10000;
+					}
+					for (int i=0; i<=99; i++)
+					{
+						X_Location_message[i] = X_Location_message[i+1];
+						Y_Location_message[i] = Y_Location_message[i+1];
+					}
+				
+			}
+			else if(Y_Location_message[0]-Y_now_pos==-4 || Y_Location_message[0]-Y_now_pos==4)
+			{
+				X_process[0] = 0;
+				//Y_process[0] = Y_Location_message[0];
+				do_advance[0]= 180;//转180°
+				do_carry[0]  = 5;
+				
+				X_process[1] = X_Location_message[0];
+				do_advance[1] = 0;
+				do_carry[1] = 10;
+				for(int i=0; i<=99; i++)
+				{
+					X_Location_message[i] = X_Location_message[i+1];
+					Y_Location_message[i] = Y_Location_message[i+1];
+				}
+				X_process[2] = 10000;
+				//Y_process[1] = 10000;
+				do_advance[2]= 10000;
+				do_carry[2]  = 10000;
+			}
+			else//逻辑部分，因为大范围为不在一条直线上，所以一定会先调头回原点，然后再转到相应的角度，最后再直行。
+			{
+				if((X_now_pos>0 && Y_now_pos >=4)||(X_now_pos<0 && Y_now_pos <4))
+				{
+					do_advance[0]= 180; //180°
+					X_process[0] = 0;
+					do_carry[0]  = 5;
+					//Y_process[0] = 0;//第一个Y_process坐标没什么用
+
+					X_process[1] = X_Location_message[0];
+					//Y_process[1] = Y_now_pos;//好像没用
+					do_carry[1]  = 10;
+					Y_need_pos = Y_Location_message[0];
+					
+					if (Y_now_pos != 4 && Y_now_pos != 0)
+						switch( Count1_7Xunhuan(Y_Location_message[0]-Y_now_pos) )
+						{
+							case 1:	 do_advance[1] = -135;	break;
+							case 2:	 do_advance[1] = -90;	break;
+							case 3:	 do_advance[1] = -45;	break;
+									
+							case 5: do_advance[1] = 45;		break;
+							case 6: do_advance[1] = 90;		break;
+							case 7: do_advance[1] = 135;	break;
+							default:	break;
+						}
+					else
+					{
+						if (Y_now_pos == 4)
+							switch (Y_Location_message[0]-Y_now_pos)
+							{
+								case 1:	do_advance[1] = -135;		break;
+								case 2:	do_advance[1] = -90;		break;
+								case 3:	do_advance[1] = -45;	break;
+								
+								case -1:do_advance[1] = 135;	break;
+								case -2:do_advance[1] = 90;	break;
+								case -3:do_advance[1] = 45;	break;
+								default:	break;
+							}
+						else 
+							switch (Y_Location_message[0]-Y_now_pos)
+							{
+								case 1:	do_advance[1] = -135;		break;
+								case 2:	do_advance[1] = -90;		break;
+								case 3:	do_advance[1] = -45;	    break;
+								
+								case 5:do_advance[1] = 45;		break;
+								case 6:do_advance[1] = 90;		break;
+								case 7:do_advance[1] = 135;	break;
+								default:	break;
+							}
+					}
+						X_process[2] = 10000;
+					//	Y_process[2] = 10000;
+						do_advance[2]= 10000;						
+						do_carry[2]  = 10000;
+				}
+				else if((X_now_pos<0 && Y_now_pos >=4)||(X_now_pos>0 && Y_now_pos <4)) 
+				{
+					do_advance[0]= 0; //0°
+					X_process[0] = 0;
+					do_carry[0]  = 5;
+					
+					X_process[1] = X_Location_message[0];
+					//Y_process[1] = Y_now_pos;
+					do_carry[1]  = 10;
+					Y_need_pos = Y_Location_message[0];
+					
+					if (Y_now_pos != 4 && Y_now_pos != 0)
+						switch( Count1_7Xunhuan(Y_Location_message[0]-Y_now_pos) )
+						{
+							case 1:	 do_advance[1] = -135;	break;
+							case 2:	 do_advance[1] = -90;	break;
+							case 3:	 do_advance[1] = -45;	break;
+									
+							case 5: do_advance[1] = 45;		break;
+							case 6: do_advance[1] = 90;		break;
+							case 7: do_advance[1] = 135;	break;
+							default:	break;
+						}
+					else
+					{
+						if (Y_now_pos == 4)
+							switch (Y_Location_message[0]-Y_now_pos)
+							{
+								case 1:	do_advance[1] = 45;		break;
+								case 2:	do_advance[1] = 90;		break;
+								case 3:	do_advance[1] = 135;	break;
+								
+								case -1:do_advance[1] = -45;	break;
+								case -2:do_advance[1] = -90;	break;
+								case -3:do_advance[1] = -135;	break;//////////////////////////
+								default:	break;
+							}
+						else 
+							switch (Y_Location_message[0]-Y_now_pos)
+							{
+								case 1:	do_advance[1] = 45;		break;
+								case 2:	do_advance[1] = 90;		break;
+								case 3:	do_advance[1] = 135;	    break;
+								
+								case -1:do_advance[1] = -45;		break;
+								case -2:do_advance[1] = -90;		break;
+								case -3:do_advance[1] = -135;	break;
+								default:	break;
+							}
+					}
+						X_process[2] = 10000;
+					//	Y_process[2] = 10000;
+						do_advance[2]= 10000;						
+						do_carry[2]  = 10000;
+				}
+				
+			}		
+		}
+		else//完成了当前的物块任务，执行下一个物块任务
+		{
+			if (X_mubiao_WZ[0] != 10000 && Y_mubiao_WZ[0] != 10000)
+			{
+				X_Location_message[0] = X_mubiao_WZ[0];
+				Y_Location_message[0] = Y_mubiao_WZ[0];
+				
+				X_Location_message[1] = 10000;
+				Y_Location_message[1] = 10000;
+				
+				for (int i=0; i<=99; i++)
+				{
+					X_mubiao_WZ[i] = X_mubiao_WZ[i+1];
+					Y_mubiao_WZ[i] = Y_mubiao_WZ[i+1];
+				}
+			}
+		}
+		
+	}
+}
+
+
+void arrive_WZ(void)
+{
+	if (do_advance[0] == 180)	time_fuzhi(4);
+	else						time_fuzhi(3);
+		
+	time_fuzhi(0);
+	r_finish_flag = 1;
+	
+	ZT_Flag = stop;
+	Y_now_pos = Y_need_pos;
+	PID_I_clear();
+	if (H_flag == 1 || 
+	   (do_advance[0] == 180 && (X_now_pos == 1 || X_now_pos == -1)))	
+				{P_flag = 4; H_flag = 0; time_fuzhi(51);}//短暂关闭寻迹
+	
+	do_advance[0] = 0;
+}
+
+//入口参数为当前车角度
+//功能：转向、转速
+void Zhuangdu(float angle)
+{	
+	switch(do_advance[0])
+	{
+		case 45:
+				if ((Zhuang_Cout >= 700) && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))		arrive_WZ();	break;
+		
+		case 90:	
+				if ((Zhuang_Cout >= 1510)  && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))		arrive_WZ();	break;
+		
+		case 135:
+				if ((Zhuang_Cout >= 2210)  && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))		arrive_WZ();	break;
+				
+		case -135:
+				if ((Zhuang_Cout <= -2250) && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))		arrive_WZ();	break; // -1100
+				
+		case -90:
+				if ( (Zhuang_Cout <= -1510) && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))	 	arrive_WZ();	break; // -680
+				
+		case -45:	
+				if ((Zhuang_Cout <= -700) && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))   	arrive_WZ();	break; // -287
+				
+		case 180:
+				if (Zhuang_Cout >= 2950 && (get_G_3 == BLACK || get_G_4 == BLACK || (get_G_2 == BLACK && get_G_5 == WHITE) || (get_G_2 == WHITE && get_G_5 == BLACK)))	        arrive_WZ();	break;//1600
+		
+		default:
+				break;
+		
+	}
+	
+}
+
+
+
