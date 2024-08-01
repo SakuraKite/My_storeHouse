@@ -1,0 +1,1 @@
+{"id": "123","version": "1.0","params": {"temp": {"value": %.1f},"window": {"value": %d},"chuanglian": {"value": %d},"fan": {	"value": %d},"humidity": {"value": %d},"led": {"value": %d}}}
