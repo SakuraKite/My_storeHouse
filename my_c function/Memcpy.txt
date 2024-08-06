@@ -1,0 +1,74 @@
+/**
+ * @brief 函数功能实现拷贝，需要注意的是在目标编译器环境下指针的大小是否为4字节，在vscode上面指针大小为8字节
+ * 
+ * @param dest 
+ * @param src 
+ * @param count 拷贝的数量
+ */
+void Memcpy2(void *dest, const void *src, size_t count)  
+{
+    /* 拷贝函数按CPU位数进行拷贝 
+    * 假设当前的MPU是32位的
+    */
+//    assert(dest);
+//    assert(src);
+    if (NULL == dest || NULL == src) return ;
+    int bytelen = count / sizeof(dest); /* 目前这个是做到一次拷贝32bit的写法 */
+    int slice = count % sizeof(dest);
+    printf("\nsizeof(dest) is %d\n", sizeof(dest));
+
+    /*辅助拷贝方式 以此实现一次拷贝32bit */
+    unsigned long *d = (unsigned long *)dest;
+    unsigned long *s = (unsigned long *)src;
+
+    if ( ((int)dest > (int)(src + count)) 
+    || ((int)dest < (int)(src)) )
+    /* 内容不重叠 or 重叠但是dest在内存中的位置位于src的前面*/
+    {
+        if (0 != bytelen)
+        {
+            while (bytelen--)
+            {   
+                // *dest++ = *src++; /* 这种一次只能拷贝4bit */
+                *d++ = *s++; /* 这个能一次拷贝32bit */
+            }
+        
+            /* 为4bit拷贝准备，保证内存存储连续 */
+            {   /* 当执行过上面的拷贝才会有内存保证连续的操作，因为while退出的条件是bytelen=-1 */
+                d--;
+                s--;
+            }
+        }
+       
+        while (slice--) /* 一次拷贝4bit */
+        {
+            *((char *)d++) = *((char *)s++);
+        }
+
+    }
+    else
+    {
+        /* 这里面只有一种情况 就是重叠 且 dest在内存中的位置位于src的后面，
+        *   拷贝需要执行从后往前的拷贝
+         */
+         d = (unsigned long *)dest + count -4;  /* 减4是从数组尾部开始，不越界*/
+         s = (unsigned long *)src + count - 4;
+         if ( 0 != bytelen )
+         {
+            while (bytelen--)
+            {
+            *d-- = *s--;
+            }
+            /* 为4bit拷贝准备，保证内存存储连续 */
+            {   /* 当执行过上面的拷贝才会有内存保证连续的操作，因为while退出的条件是bytelen=-1 */
+                d++;
+                s++;
+            }
+         }
+        while (slice--)
+        {
+            *((char *)d--) = *((char *)s--);
+        }
+
+    }
+}
